@@ -1,3 +1,7 @@
+default:
+	make clean
+	ghc -o parse --make parse.hs
+
 parse:
 	ghc -o parse --make parse.hs
 

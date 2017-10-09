@@ -2,7 +2,7 @@ module Main where
 import Text.ParserCombinators.Parsec hiding (spaces)
 import System.Environment
 import Numeric
--- import Control.Monad -- Needed if we are using liftM
+import Control.Monad -- liftM
 
 
 {- Data Types -}
@@ -15,8 +15,25 @@ data LispVal = Atom String
   | Float Double
   | String String
   | Char Char
-  | Bool Bool deriving (Show, Eq)
+  | Bool Bool
 
+instance Show LispVal where show = showVal
+
+-- helper for showing LispVals
+unwordsList :: [LispVal] -> String
+unwordsList = unwords . map showVal
+
+-- String format our LispVals
+showVal :: LispVal -> String
+showVal (List l) = "(" ++ unwordsList l ++ ")"
+showVal (DottedList head tail) = "(" ++ unwordsList head ++ "." ++ showVal tail ++ ")"
+showVal (String s) = "\"" ++ s ++ "\""
+showVal (Atom name) = name
+showVal (Number n) = show n
+showVal (Float f) = show f
+showVal (Char c) = show c
+showVal (Bool True) = "#t"
+showVal (Bool False) = "#f"
 
 
 {- Parsers for individual components -}
@@ -41,16 +58,16 @@ spaces = skipMany1 space
 parseString :: Parser LispVal
 parseString = do
   _ <- char '"'
-  x <- many character
+  a <- many character
   _ <- char '"'
-  return (String  (concat x))
+  return (String  (concat a))
 
 parseChar :: Parser LispVal
 parseChar = do
   _ <- char '\''
-  x <- anyChar
+  a <- anyChar
   _ <- char '\''
-  return (Char x)
+  return (Char a)
 
 parseAtom :: Parser LispVal
 parseAtom = do
@@ -76,8 +93,8 @@ parseFloat :: Parser LispVal
 parseFloat = do
   a <- many1 digit
   _ <- char '.'
-  c <- many1 digit
-  return $ Float $ fst $ (readFloat $ a++"."++c) !! 0
+  b <- many1 digit
+  return $ Float $ fst $ (readFloat $ a ++ "." ++ b) !! 0
 
  -- Need `try` here to prevent parseFloat from consuming input if it fails
  -- TODO :: add hex/oct, fractional & complex
@@ -99,11 +116,51 @@ Here, we use modadic `do` notation to sugar the binds and lambda from above.
 >   return $ Number (read x)
 -}
 
+-- Parse lists of elements as s-expressions
+parseList :: Parser LispVal
+parseList = liftM List $ sepBy parseExpr spaces
+
+-- parse dotted lists (improper lists)
+parseDotted :: Parser LispVal
+parseDotted = do
+  head <- endBy parseExpr spaces
+  tail <- char '.' >> spaces >> parseExpr
+  return $ DottedList head tail
+
+
+-- Helper for making parsers prefixed expressions
+prefixParser :: String -> String -> Parser LispVal
+prefixParser prefix tag = do
+  _ <- string prefix
+  a <- parseExpr
+  return $ List [Atom tag, a]
+
+parseQuoted :: Parser LispVal
+parseQuoted = prefixParser "'" "quote"
+
+parseQuasiQuoted :: Parser LispVal
+parseQuasiQuoted = prefixParser "`" "quasiquote"
+
+parseUnQuote :: Parser LispVal
+parseUnQuote = prefixParser "," "unquote"
+
+parseUnQuoteSplicing :: Parser LispVal
+parseUnQuoteSplicing = prefixParser ",@" "unquote-splicing"
+
+
+-- Compound parser for parsing any valid expression
 parseExpr :: Parser LispVal
 parseExpr = parseAtom
-  <|> parseChar
+  <|> try parseChar -- need try to avoid clobbering quoting later
   <|> parseString
   <|> parseNumeric
+  <|> parseQuoted
+  <|> parseQuasiQuoted
+  <|> try parseUnQuoteSplicing <|> parseUnQuote
+  <|> do char '('
+         l <- try parseList <|> parseDotted
+         char ')'
+         return l
 
 
 {- Reader Function using the parser and the main program -}
