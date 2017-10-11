@@ -25,18 +25,20 @@ unwordsList = unwords . map showVal
 
 -- String format our LispVals
 showVal :: LispVal -> String
-showVal (List l) = "(" ++ unwordsList l ++ ")"
+showVal (List l)               = "(" ++ unwordsList l ++ ")"
 showVal (DottedList head tail) = "(" ++ unwordsList head ++ "." ++ showVal tail ++ ")"
-showVal (String s) = "\"" ++ s ++ "\""
-showVal (Atom name) = name
-showVal (Number n) = show n
-showVal (Float f) = show f
-showVal (Char c) = show c
-showVal (Bool True) = "#t"
-showVal (Bool False) = "#f"
+showVal (String s)             = "\"" ++ s ++ "\""
+showVal (Atom name)            = name
+showVal (Number n)             = show n
+showVal (Float f)              = show f
+showVal (Char c)               = show c
+showVal (Bool True)            = "#t"
+showVal (Bool False)           = "#f"
 
 
-{- Parsers for individual components -}
+---------------------------------------
+-- Parsers for individual components --
+---------------------------------------
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
@@ -83,7 +85,6 @@ parseAtom = do
     "#t" -> Bool True
     "#f" -> Bool False
     _    -> Atom atom
-
 
 -- In Scheme we are allowed octal and hex numbers as well.
 parseNumber :: Parser LispVal
@@ -162,16 +163,66 @@ parseExpr = parseAtom
          char ')'
          return l
 
+-------------------------
+-- Built in operations --
+-------------------------
+primitives :: [(String, [LispVal] -> LispVal)]
+primitives = [("+", numBinop (+)),
+              ("-", numBinop (-)),
+              ("*", numBinop (*)),
+              ("/", numBinop div),
+              ("mod", numBinop mod),
+              ("quotient", numBinop quot),
+              ("remainder", numBinop rem),
+              ("symbol?", isSymbol),
+              ("number?", isNumber),
+              ("string?", isString)]
 
-{- Reader Function using the parser and the main program -}
-readExpr :: String -> String
+-- Convert LispVals to their wrapped values if they are numeric
+numToInteger :: LispVal -> Integer
+numToInteger (Number n) = n
+numToInteger _          = 0  -- fixme!
+
+-- Perform a LISPy reduction using a binary operation
+-- Extracts the Integers within Numbers and then folds using the binop
+numBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+numBinop op params = Number (foldl1 op (map numToInteger params))
+
+-- Looks like you can't paramaterise a pattern match so we need individual
+-- functions to match each constructor... #sadpanda
+isSymbol :: [LispVal] -> LispVal
+isSymbol [Atom a] = Bool True
+isSymbol _        = Bool False
+
+isString :: [LispVal] -> LispVal
+isString [String s] = Bool True
+isString _          = Bool False
+
+isNumber :: [LispVal] -> LispVal
+isNumber [Number n] = Bool True
+isNumber _          = Bool False
+
+------------------------------------
+-- read >> eval >> apply >> print --
+------------------------------------
+readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
-  Left err -> "No match: " ++ show err
-  Right val -> show val
+  Left err  -> String ("No match: " ++ show err)
+  Right val -> val
 
+-- Adding unqoute, quasi-quote and splicing will be harder...!
+eval :: LispVal -> LispVal
+eval val@(String _)             = val
+eval val@(Char _)               = val
+eval val@(Number _)             = val
+eval val@(Float _)              = val
+eval val@(Bool _)               = val
+eval (List [Atom "quote", val]) = val
+eval (List (Atom func : args))  = apply func $ map eval args
+
+-- Look up a function in our list of known operations
+apply :: String -> [LispVal] -> LispVal
+apply func args = maybe (Bool False) ($ args) $ lookup func primitives
 
 main :: IO ()
-main = do
-  -- This pattern matches agains the list from getArgs and pulls off the head
-  (expr:_) <- getArgs
-  putStrLn (readExpr expr)
+main = getArgs >>= print . eval . readExpr . head
